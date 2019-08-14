@@ -63,51 +63,50 @@ namespace AETL_Uploader
 
         public static async Task UploadMediaToCloud(string filePath)
         {
-            string fileName = Path.GetFileName(filePath);
-            string locationID = fileName.Substring(0, fileName.IndexOf('-'));
-            fileName = fileName.Substring(fileName.IndexOf('-') + 1);
-            string projectID = fileName.Substring(0, fileName.IndexOf('-'));
-
-            //if this is a monthly video being uploaded then use the filename, otherwise if its a start-to-end video use full.mp4
-            if (fileName.Contains("MONTHLY"))
+            AETL_Object obj;
+            {
+                string fileName = Path.GetFileName(filePath);
+                string locationID = fileName.Substring(0, fileName.IndexOf('-'));
                 fileName = fileName.Substring(fileName.IndexOf('-') + 1);
-            else
-                fileName = "full.mp4";
+                string projectID = fileName.Substring(0, fileName.IndexOf('-'));
 
+
+                //if this is a monthly video being uploaded then use the filename, otherwise if its a start-to-end video use full.mp4
+                if (filePath.Contains("MONTHLY"))
+                {
+                    obj = new AETL_Monthly();
+                    obj.Filename = fileName.Substring(fileName.IndexOf('-') + 1);
+                }
+                else
+                {
+                    obj = new AETL_Full();
+                    obj.Filename = "full.mp4";
+                }
+
+                obj.ProjectID = projectID;
+                obj.LocationID = locationID;
+                obj.Bucket = Properties.Settings.Default.Bucket;
+                obj.Filepath = filePath;
+            }
          
             using (StorageClient storageClient = StorageClient.Create(googleCredential))
             {
                 //this is the directory we will upload to
                 string bucketDirectory = "";
 
-                //find out if our directory exists
-                List<string> bucketObjects = new List<string>();
-                var request = storageClient.ListObjects(Properties.Settings.Default.Bucket).Where( s => s.Name.EndsWith("/") && s.Name.Contains(locationID) && s.Name.Contains(projectID));
-                foreach (Google.Apis.Storage.v1.Data.Object val in request)
-                    bucketObjects.Add(val.Name);
+                //check if the subfolder exists for our object
+                obj.GetSubFolder(storageClient);
 
-                //if we didnt find our directory make them
-                if (bucketObjects.Count == 0)
-                {
-                    AddFolder(storageClient, Properties.Settings.Default.BucketSubfolder + "/" + locationID, Properties.Settings.Default.Bucket);//{location_id}
-                    bucketDirectory = AddFolder(storageClient, Properties.Settings.Default.BucketSubfolder + "/" + locationID + "/" + projectID, Properties.Settings.Default.Bucket);//{location_id}/{project_id}
-                }
-                else
-                    //if its there then use it
-                    bucketDirectory = bucketObjects[0];
+                //check if the file already exists.... if it does and its not a GENERIC project then we can leave.
+                if (obj.CheckIfFileExists(storageClient) && obj.Type != ProjectType.GENERIC)
+                    return;
 
+                //otherwise lets upload the data
                 try
                 {
-                    var objectToUpload = new Google.Apis.Storage.v1.Data.Object()
-                    {
-                        Bucket = Properties.Settings.Default.Bucket,
-                        Name = bucketDirectory + fileName,
-                        ContentType = "video/mp4"
-                    };
-
                     using (var fileStream = new FileStream(filePath, FileMode.Open))
                     {
-                        await storageClient.UploadObjectAsync(objectToUpload, fileStream).ConfigureAwait(false);
+                        await storageClient.UploadObjectAsync(obj.GetObject(), fileStream).ConfigureAwait(false);
                         return;
                     }
                 }
