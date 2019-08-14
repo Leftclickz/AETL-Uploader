@@ -3,3 +3,6 @@
 ################################################################################
 
 /AETL-Uploader/.vs/AETL-Uploader/v16
+/AETL-Uploader/bin/Debug
+/AETL-Uploader/obj/Debug
+/AETL-Uploader/data
