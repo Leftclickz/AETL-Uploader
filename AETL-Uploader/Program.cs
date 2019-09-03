@@ -6,7 +6,7 @@ using Google.Apis.Auth.OAuth2;
 using System.Threading;
 using System.Collections.Generic;
 using Google.Cloud.Storage.V1;
-using System.Linq;
+
 
 namespace AETL_Uploader
 {
@@ -17,7 +17,8 @@ namespace AETL_Uploader
 
         static void Main(string[] args)
         {
-            Console.WriteLine("AETL-Uploader");
+            Console.WriteLine("-- AETL-Uploader --");
+            Console.WriteLine("VERSION: 0.1a");
 
             try
             {
@@ -43,15 +44,16 @@ namespace AETL_Uploader
 
             List<Task> uploadTasks = new List<Task>();
 
+            Console.WriteLine("Update loop - " + files.Length.ToString() + " files located for upload. \n");
+
             //queue all files for upload
             foreach (string s in files)
-            {
                 uploadTasks.Add(Task.Run(() => UploadMediaToCloud(s)));
-                break;
-            }
 
-            //wait until they completed
+            //wait until they complete
             await Task.WhenAll(uploadTasks);
+
+            Console.WriteLine("\nUpdate loop complete. \n");
         }
 
         public static void SetCredentials()
@@ -59,43 +61,56 @@ namespace AETL_Uploader
             // Set google cloud credentials
             using (Stream stream = new FileStream(Properties.Settings.Default.GoogleCloudCredentialPath, FileMode.Open, FileAccess.Read))
                 googleCredential = GoogleCredential.FromStream(stream).CreateScoped(Properties.Settings.Default.GoogleCloudScope);
+
+            Console.WriteLine("Credentials set.");
         }
 
         public static async Task UploadMediaToCloud(string filePath)
         {
             AETL_Object obj;
             {
+                //pull data from the strings
                 string fileName = Path.GetFileName(filePath);
-                string locationID = fileName.Substring(0, fileName.IndexOf('-'));
-                fileName = fileName.Substring(fileName.IndexOf('-') + 1);
                 string projectID = fileName.Substring(0, fileName.IndexOf('-'));
+                fileName = fileName.Substring(fileName.IndexOf('-') + 1);
+                string locationID;
 
+                if (fileName.IndexOf('-') == -1)
+                    locationID = fileName.Substring(0, fileName.IndexOf(".mp4"));
+                else
+                    locationID = fileName.Substring(0, fileName.IndexOf('-'));
+
+                //fetch resolution
+                string Resolution = Path.GetDirectoryName(filePath);
+                Resolution = Resolution.Substring(Resolution.IndexOf('\\') + 1);
+                Resolution = Resolution.Substring(Resolution.IndexOf('\\') + 1);
 
                 //if this is a monthly video being uploaded then use the filename, otherwise if its a start-to-end video use full.mp4
                 if (filePath.Contains("MONTHLY"))
                 {
                     obj = new AETL_Monthly();
-                    obj.Filename = fileName.Substring(fileName.IndexOf('-') + 1);
+                    string name = fileName.Substring(fileName.IndexOf('-') + 1);
+                    name = name.Substring(0, name.IndexOf('.'));
+                    obj.Filename = name;
                 }
                 else
                 {
                     obj = new AETL_Full();
-                    obj.Filename = "full.mp4";
+                    obj.Filename = "full";
                 }
 
+                //fill object data
                 obj.ProjectID = projectID;
                 obj.LocationID = locationID;
                 obj.Bucket = Properties.Settings.Default.Bucket;
                 obj.Filepath = filePath;
+                obj.VideoRes = Resolution;
             }
          
             using (StorageClient storageClient = StorageClient.Create(googleCredential))
             {
-                //this is the directory we will upload to
-                string bucketDirectory = "";
-
                 //check if the subfolder exists for our object
-                obj.GetSubFolder(storageClient);
+                obj.GenerateSubfolders(storageClient);
 
                 //check if the file already exists.... if it does and its not a GENERIC project then we can leave.
                 if (obj.CheckIfFileExists(storageClient) && obj.Type != ProjectType.GENERIC)
@@ -106,9 +121,20 @@ namespace AETL_Uploader
                 {
                     using (var fileStream = new FileStream(filePath, FileMode.Open))
                     {
-                        await storageClient.UploadObjectAsync(obj.GetObject(), fileStream).ConfigureAwait(false);
-                        return;
+                        //upload the file
+                        Console.WriteLine("Attempting file upload: " + filePath);
+                        Google.Apis.Storage.v1.Data.Object output  = await storageClient.UploadObjectAsync(obj.GetObject(), fileStream).ConfigureAwait(false);
+
+                        //report success
+                        Console.WriteLine("File uploaded: " + filePath);
+                        Console.WriteLine("Object created: " + output.TimeCreated);             
                     }
+
+                    //cleanup the file now that its been uploaded
+                    Thread.Sleep(10000);
+                    File.Delete(filePath);
+
+                    return;
                 }
                 catch (Google.GoogleApiException e)
                 {
@@ -123,9 +149,11 @@ namespace AETL_Uploader
 
         public static string AddFolder(in StorageClient client, string folder, string bucket)
         {
+            //add the ending slash if it isnt there
             if (!folder.EndsWith("/"))
                 folder += "/";
 
+            //create the folder object
             Google.Apis.Storage.v1.Data.Object obj = new Google.Apis.Storage.v1.Data.Object()
             {
                 Bucket = bucket,
@@ -135,6 +163,8 @@ namespace AETL_Uploader
 
             try
             {
+                //attempt to upload the folder
+                Console.WriteLine("Creating subdirectory of bucket: " + folder);
                 client.UploadObject(obj, new MemoryStream(Encoding.UTF8.GetBytes("")));
                 return folder;
             }

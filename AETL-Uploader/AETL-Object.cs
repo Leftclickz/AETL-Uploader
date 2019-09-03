@@ -13,15 +13,6 @@ enum ProjectType
     WEEKLY = 3
 }
 
-enum Resolution
-{
-    DEFAULT = 0,
-    FOUR_EIGHTY = 1,
-    SEVEN_TWENTY = 2,
-    THOSAND_EIGHTY = 3,
-    NATIVE = 4
-}
-
 namespace AETL_Uploader
 {
     abstract class AETL_Object
@@ -29,9 +20,11 @@ namespace AETL_Uploader
 
         public abstract bool CheckIfFileExists(in StorageClient client);
 
-        public bool GetSubFolder(in StorageClient client)
+        public bool GenerateSubfolders(in StorageClient client)
         {
             bool returnVal = true;
+            BucketDirectory = Properties.Settings.Default.BucketSubfolder + "/" + ProjectID + "/" + LocationID;
+
             if (GetObjectsDelimited(client, true, Properties.Settings.Default.BucketSubfolder, ProjectID).Count == 0)
                 Program.AddFolder(client, Properties.Settings.Default.BucketSubfolder + "/" + ProjectID, Bucket);
             if (GetObjectsDelimited(client, true, Properties.Settings.Default.BucketSubfolder, ProjectID, LocationID).Count == 0)
@@ -40,7 +33,7 @@ namespace AETL_Uploader
                 returnVal = false;
             }
 
-            BucketDirectory = Properties.Settings.Default.BucketSubfolder + "/" + ProjectID + "/" + LocationID;
+           
 
             return returnVal;
         }
@@ -49,7 +42,7 @@ namespace AETL_Uploader
         {
             Object = new Google.Apis.Storage.v1.Data.Object()
             {
-                Name = Filename,
+                Name = BucketDirectory + "/" + Filename + "-" + VideoRes + ".mp4",
                 Bucket = this.Bucket,
                 ContentType = "video/mp4"
             };
@@ -87,7 +80,7 @@ namespace AETL_Uploader
         public virtual string Bucket { get; set; }
         public virtual string ProjectID { get; set; }
         public virtual string LocationID { get; set; }
-        public virtual Resolution VideoRes { get; set; }
+        public virtual string VideoRes { get; set; }
 
         public abstract ProjectType Type { get; }
 
