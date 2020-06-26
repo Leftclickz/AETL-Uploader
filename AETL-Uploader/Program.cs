@@ -6,7 +6,7 @@ using Google.Apis.Auth.OAuth2;
 using System.Threading;
 using System.Collections.Generic;
 using Google.Cloud.Storage.V1;
-
+using AETL_Uploader.Properties;
 
 namespace AETL_Uploader
 {
@@ -15,26 +15,140 @@ namespace AETL_Uploader
         private static GoogleCredential googleCredential;
         private static volatile bool programRunning = true;
 
+        private static volatile bool IsInCommandMode = false;
+        private static List<string> CommandList = null;
+
         static void Main(string[] args)
         {
             Console.WriteLine("-- AETL-Uploader --");
-            Console.WriteLine("VERSION: 0.1a");
+            Console.WriteLine("VERSION: 0.2a");
 
-            try
+            for (int i = 0; i < args.Length; i++)
             {
-                SetCredentials();
-            }
-            catch (Exception e)
-            {
-                Console.Error.WriteLine(e);
-                programRunning = false;
+                if (args[i] == "-i")
+                {
+                    IsInCommandMode = true;
+                    CommandList = new List<string>();
+
+                    int baseBuf = i + 1;
+
+                    //Add each string after the -i command until a new command is found
+                    while (baseBuf < args.Length)
+                    {
+                        //Escape out of this sequence if another command is input
+                        if (args[baseBuf][0] == '-')
+                        {
+                            i = baseBuf;
+                            break;
+                        }
+
+                        CommandList.Add(args[baseBuf]);
+                        baseBuf++;
+                        i++;
+                    }
+
+                    i--;
+                }
+                else if (args[i] == "-b")
+                {
+                    if (i+1 == args.Length)
+                    {
+                        Console.Error.WriteLine("-b command requires a string (the name of the google bucket).\n Example: \"-b AETL\".");
+                        programRunning = false;
+                    }
+                    else
+                    {
+                        Settings.Default.Bucket = args[i + 1];
+                        i++;
+                    }
+                }
+                else if (args[i] == "-sub")
+                {
+                    if (i + 1 == args.Length)
+                    {
+                        Console.Error.WriteLine("-b command requires a string (path to the google bucket subfolder that will be uploaded to).\n Example: \"-sub timelapses\"");
+                        programRunning = false;
+                    }
+                    else
+                    {
+                        Settings.Default.BucketSubfolder = args[i + 1];
+                        i++;
+                    }
+                }
+                else if (args[i] == "-h")
+                {
+                    if (i + 1 == args.Length)
+                    {
+                        Console.Error.WriteLine("-h command requires a full filepath to the mp4 hotfolder for uploads. \nExample: -h \"O:\\Projects\\Videos\"\"");
+                        programRunning = false;
+                    }
+                    else
+                    {
+                        Settings.Default.HotFolder = args[i + 1];
+                        i++;
+                    }
+                }
+                else if (args[i] == "-cred")
+                {
+                    if (i + 1 == args.Length)
+                    {
+                        Console.Error.WriteLine("-cred command requires a full filepath that leads to the json credential file.\nExample: -h \"O:\\Projects\\json\\file.json\"\"");
+                        programRunning = false;
+                    }
+                    else
+                    {
+                        Settings.Default.HotFolder = args[i + 1];
+                        i++;
+                    }
+                }
             }
 
-            while (programRunning)
+            if (programRunning)
             {
-                ParseFilesForUploadAsync().Wait();
-                Thread.Sleep(10000);
-            } 
+                //Set access to the google bucket
+                try
+                {
+                    SetCredentials();
+                }
+                catch (Exception e)
+                {
+                    Console.Error.WriteLine(e);
+                    Console.Out.WriteLine("Error: AETL-Uploader failed to connect to the Google bucket.");
+                    programRunning = false;
+                }
+            }
+
+            //This is the standard program hot-folder operation procedure where files are constantly parsed for upload.
+            if (IsInCommandMode == false)
+            {
+                while (programRunning)
+                {
+                    ParseFilesForUploadAsync().Wait();
+                    Thread.Sleep(10000);
+                }
+            }
+            //Otherwise this program will do only specific uploads and close when complete
+            else 
+            {
+            }
+        }
+
+        public static async Task UploadTargettedFilesAsync()
+        {
+            List<Task> uploadTasks = new List<Task>();
+            Console.Out.WriteLine("Upload: " + CommandList.Count.ToString() + " files set for upload. \n");
+
+            //queue all files for upload
+            foreach (string s in CommandList)
+            {
+                uploadTasks.Add(Task.Run(() => UploadMediaToCloud(s)));
+            }
+
+            //wait until they complete
+            await Task.WhenAll(uploadTasks);
+
+            //notify user
+            Console.Out.WriteLine("\nUpdate loop complete. \n");
         }
 
         public static async Task ParseFilesForUploadAsync()
@@ -62,7 +176,7 @@ namespace AETL_Uploader
             using (Stream stream = new FileStream(Properties.Settings.Default.GoogleCloudCredentialPath, FileMode.Open, FileAccess.Read))
                 googleCredential = GoogleCredential.FromStream(stream).CreateScoped(Properties.Settings.Default.GoogleCloudScope);
 
-            Console.WriteLine("Credentials set.");
+            Console.Out.WriteLine("Credentials set.");
         }
 
         public static async Task UploadMediaToCloud(string filePath)
@@ -122,12 +236,12 @@ namespace AETL_Uploader
                     using (var fileStream = new FileStream(filePath, FileMode.Open))
                     {
                         //upload the file
-                        Console.WriteLine("Attempting file upload: " + filePath);
+                        Console.Out.WriteLine("Attempting file upload: " + filePath);
                         Google.Apis.Storage.v1.Data.Object output  = await storageClient.UploadObjectAsync(obj.GetObject(), fileStream).ConfigureAwait(false);
 
                         //report success
-                        Console.WriteLine("File uploaded: " + filePath);
-                        Console.WriteLine("Object created: " + output.TimeCreated);             
+                        Console.Out.WriteLine("File uploaded: " + filePath);
+                        Console.Out.WriteLine("Object created: " + output.TimeCreated);             
                     }
 
                     //cleanup the file now that its been uploaded
@@ -138,11 +252,11 @@ namespace AETL_Uploader
                 }
                 catch (Google.GoogleApiException e)
                 {
-                    Console.WriteLine("Google API error: " + e.Message);
+                    Console.Error.WriteLine("Google API error: " + e.Message);
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine("Unhandled exception: " + e.Message);
+                    Console.Error.WriteLine("Unhandled exception: " + e.Message);
                 }
             }
         }
@@ -164,13 +278,13 @@ namespace AETL_Uploader
             try
             {
                 //attempt to upload the folder
-                Console.WriteLine("Creating subdirectory of bucket: " + folder);
+                Console.Out.WriteLine("Creating subdirectory of bucket: " + folder);
                 client.UploadObject(obj, new MemoryStream(Encoding.UTF8.GetBytes("")));
                 return folder;
             }
             catch (Google.GoogleApiException e)
             {
-                Console.WriteLine("Google API Error: " + e.Message);
+                Console.Out.WriteLine("Google API Error: " + e.Message);
                 return null;
             }
         }
